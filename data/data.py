@@ -3,16 +3,16 @@ import tensorflow_datasets as tfds
 import tensorflow as tf
 
 class Data:
-    _CIFAR_5_CLASSES = [0, 1, 2, 3, 4]
+    _CIFAR_10_CLASSES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
     def __init__(self):
         ds = tfds.load("cifar10", split="train", as_supervised=True, data_dir="./data/public") # as_supervised=True means that the dataset is returned as a tuple of (image, label)
-        ds = Data._get_cifar_5_ds(ds)
+        ds = Data._get_cifar_10_ds(ds)
         self.ds = ds
 
     @staticmethod
-    def _get_cifar_5_ds(ds: tf.data.Dataset) -> tf.data.Dataset:
-        classes = tf.constant(Data._CIFAR_5_CLASSES, dtype=tf.int64)
+    def _get_cifar_10_ds(ds: tf.data.Dataset) -> tf.data.Dataset:
+        classes = tf.constant(Data._CIFAR_10_CLASSES, dtype=tf.int64)
         ds = ds.filter(lambda x, y: tf.reduce_any(tf.equal(y, classes)))
         return ds
 
