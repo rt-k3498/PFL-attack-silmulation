@@ -8,7 +8,8 @@ Settings = Dict[SettingOptions, Any]
 
 class LeNet(CNN): # LeNet-5
 
-    def __init__(self, settings: Settings = {}):
+    def __init__(self, seed: int, settings: Settings = {}):
+        self.seed = seed
         settings["layers"] = [
             tf.keras.layers.Input(shape=(32, 32, 3)),
 
@@ -16,8 +17,9 @@ class LeNet(CNN): # LeNet-5
             tf.keras.layers.Conv2D(
                 filters=6,
                 kernel_size=(5, 5),
-                activation='relu',
-                padding='valid'
+                activation='sigmoid',
+                padding='valid',
+                kernel_initializer=tf.keras.initializers.GlorotUniform(seed=self.seed)
             ),
 
             # S2
@@ -27,8 +29,9 @@ class LeNet(CNN): # LeNet-5
             tf.keras.layers.Conv2D(
                 filters=16,
                 kernel_size=(5, 5),
-                activation='relu',
-                padding='valid'
+                activation='sigmoid',
+                padding='valid',
+                kernel_initializer=tf.keras.initializers.GlorotUniform(seed=self.seed)
             ),
 
             # S4
@@ -38,16 +41,17 @@ class LeNet(CNN): # LeNet-5
             tf.keras.layers.Conv2D(
                 filters=120,
                 kernel_size=(5, 5),
-                activation='relu',
-                padding='valid'
+                activation='sigmoid',
+                padding='valid',
+                kernel_initializer=tf.keras.initializers.GlorotUniform(seed=self.seed)
             ),
 
             tf.keras.layers.Flatten(),
 
             # F6
-            tf.keras.layers.Dense(84, activation='relu'),
+            tf.keras.layers.Dense(84, activation='sigmoid', kernel_initializer=tf.keras.initializers.GlorotUniform(seed=self.seed)),
 
             # Output
-            tf.keras.layers.Dense(10, activation='softmax')
+            tf.keras.layers.Dense(10, activation='softmax', kernel_initializer=tf.keras.initializers.GlorotUniform(seed=self.seed))
         ]
         super().__init__(settings)

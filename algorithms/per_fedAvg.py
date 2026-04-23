@@ -5,7 +5,8 @@ import tensorflow as tf
 from models.model import Model
 from clients.client import Client
 from attacks.attack import Attack
-from data.data import Data  # used in __init__ for init_data
+from data.data import CIFAR10Data  # used in __init__ for init_data
+from metrics.PerformanceMetric import PerformanceMetric
 
 SettingOptions = Literal[
     "communication_rounds", 
@@ -19,15 +20,16 @@ SettingOptions = Literal[
     "metrics",
     "local_training_approximation",
     "reuse_data_batches",
+    "hf_delta",
 ]
 Settings = Dict[SettingOptions, Any]
 
 class PerFedAvg:
-    local_training_approximation_options = ["HF", "FO"]
+    local_training_approximation_options = ["HF", "FO", "HVP"]
     
-    def __init__(self, model: Model, clients: List[Client], settings: Settings = {}):
+    def __init__(self, model: Model, clients: List[Client], seed: int, settings: Settings = {}):
         self.clients = clients
-        self.init_data = Data().get_x_y(1, 1) # (x, y)
+        self.init_data = CIFAR10Data(seed=seed).get_x_y(1, 1) # (x, y)
         self.model = model
         self.communication_rounds = settings.get("communication_rounds", 1)
         self.client_adaptation_rounds = settings.get("client_adaptation_rounds", 1)
@@ -40,6 +42,7 @@ class PerFedAvg:
         self.metrics = settings.get("metrics", ["accuracy"])
         self.local_training_approximation = settings.get("local_training_approximation", "FO")
         self.reuse_data_batches = settings.get("reuse_data_batches", False)
+        self.hf_delta = settings.get("hf_delta", 1e-2)
 
         if self.local_training_approximation not in self.local_training_approximation_options:
             raise Exception("Invalid local training approximation")
@@ -56,10 +59,107 @@ class PerFedAvg:
         self.model.set_weights(averaged)
 
     def _HVP_training_algorithm(self, model: Model, client: Client) -> Model:
-        pass
+        """
+        Per-FedAvg meta-update using the exact Hessian-vector product via
+        nested GradientTape. Reuses one (x, y) batch per training round
+        (matches reuse_data_batches=True semantics).
+
+        theta <- theta - beta * (v - alpha * H_f(theta) * v),
+        where v = grad f(theta - alpha * grad f(theta); x, y).
+        """
+        for _ in range(self.client_training_rounds):
+            original_weights = model.get_weights()
+            x, y = client.sample(self.client_training_batch_size)
+
+            with tf.GradientTape() as inner_tape:
+                y_pred = model.model(x, training=True)
+                loss = self.loss_function(y, y_pred)
+            inner_grads = inner_tape.gradient(loss, model.model.trainable_variables)
+
+            adapted_weights = [
+                w - self.alpha * g.numpy() for w, g in zip(original_weights, inner_grads)
+            ]
+            model.set_weights(adapted_weights)
+            with tf.GradientTape() as adapted_tape:
+                y_pred = model.model(x, training=True)
+                loss = self.loss_function(y, y_pred)
+            v = adapted_tape.gradient(loss, model.model.trainable_variables)
+            v_const = [tf.constant(vi.numpy()) for vi in v]
+
+            model.set_weights(original_weights)
+            with tf.GradientTape() as outer_tape:
+                with tf.GradientTape() as hv_inner_tape:
+                    y_pred = model.model(x, training=True)
+                    loss = self.loss_function(y, y_pred)
+                g_vars = hv_inner_tape.gradient(loss, model.model.trainable_variables)
+                gv_dot = tf.add_n([
+                    tf.reduce_sum(gi * vi) for gi, vi in zip(g_vars, v_const)
+                ])
+            Hv = outer_tape.gradient(gv_dot, model.model.trainable_variables)
+
+            meta_weights = [
+                w - self.beta * (vi.numpy() - self.alpha * hvi.numpy())
+                for w, vi, hvi in zip(original_weights, v_const, Hv)
+            ]
+            model.set_weights(meta_weights)
+
+        return model
 
     def _HF_training_algorithm(self, model: Model, client: Client) -> Model:
-        pass
+        """
+        Per-FedAvg meta-update using a finite-difference Hessian-free
+        approximation of the Hessian-vector product. Reuses one (x, y) batch
+        per training round.
+
+        Hv approx = (grad f(theta + delta * v) - grad f(theta - delta * v)) / (2 * delta)
+        theta <- theta - beta * (v - alpha * Hv)
+        """
+        for _ in range(self.client_training_rounds):
+            original_weights = model.get_weights()
+            x, y = client.sample(self.client_training_batch_size)
+
+            with tf.GradientTape() as inner_tape:
+                y_pred = model.model(x, training=True)
+                loss = self.loss_function(y, y_pred)
+            inner_grads = inner_tape.gradient(loss, model.model.trainable_variables)
+
+            adapted_weights = [
+                w - self.alpha * g.numpy() for w, g in zip(original_weights, inner_grads)
+            ]
+            model.set_weights(adapted_weights)
+            with tf.GradientTape() as adapted_tape:
+                y_pred = model.model(x, training=True)
+                loss = self.loss_function(y, y_pred)
+            v = adapted_tape.gradient(loss, model.model.trainable_variables)
+            v_np = [vi.numpy() for vi in v]
+
+            plus_weights = [w + self.hf_delta * vi for w, vi in zip(original_weights, v_np)]
+            model.set_weights(plus_weights)
+            with tf.GradientTape() as plus_tape:
+                y_pred = model.model(x, training=True)
+                loss = self.loss_function(y, y_pred)
+            g_plus = plus_tape.gradient(loss, model.model.trainable_variables)
+            g_plus_np = [gpi.numpy() for gpi in g_plus]
+
+            minus_weights = [w - self.hf_delta * vi for w, vi in zip(original_weights, v_np)]
+            model.set_weights(minus_weights)
+            with tf.GradientTape() as minus_tape:
+                y_pred = model.model(x, training=True)
+                loss = self.loss_function(y, y_pred)
+            g_minus = minus_tape.gradient(loss, model.model.trainable_variables)
+            g_minus_np = [gmi.numpy() for gmi in g_minus]
+
+            hv_approx = [
+                (gp - gm) / (2.0 * self.hf_delta) for gp, gm in zip(g_plus_np, g_minus_np)
+            ]
+
+            meta_weights = [
+                w - self.beta * (vi - self.alpha * hvi)
+                for w, vi, hvi in zip(original_weights, v_np, hv_approx)
+            ]
+            model.set_weights(meta_weights)
+
+        return model
 
     def _FO_training_algorithm(self, model: Model, client: Client) -> Model:
         if self.reuse_data_batches:
@@ -110,11 +210,13 @@ class PerFedAvg:
             return self._HF_training_algorithm(model, client)
         elif self.local_training_approximation == "FO":
             return self._FO_training_algorithm(model, client)
+        elif self.local_training_approximation == "HVP":
+            return self._HVP_training_algorithm(model, client)
         else:
             raise Exception("Invalid local training approximation")
 
 
-    def run(self, attack: Attack = None, performance_metrics: List[Callable] = None) -> list:
+    def run(self, attack: Attack = None, performance_metrics: List[PerformanceMetric] = None) -> list:
         """
         Run the PerFedAvg algorithm.
         """
@@ -126,23 +228,25 @@ class PerFedAvg:
             client.set_training_algorithm(self.client_training_algorithm)
 
         for communication_round in range(self.communication_rounds):
-            print(f"Communication round {communication_round + 1} of {self.communication_rounds}")
+
+            clients_data = {}
 
             for client in self.clients:
                 client.clear_training_data()
-                client.set_model(Model.clone(self.model))
+                client.set_model(self.model.clone())
                 client.train()
-            print(f"Clients model training completed")
+                weights = client.get_weights()
+                data = client.get_data_used_for_training()
+                clients_data[client.id] = (weights, data)
 
             if attack:
-                for client in self.clients:
-                    attack.run(self.model, client.get_model(), {"learning_rate": self.beta})
+                for client_id in clients_data:
+                    attack.run(self.model, clients_data[client_id][0], {"learning_rate": self.beta, "num_classes": len(CIFAR10Data._CIFAR_10_CLASSES)})
                     if performance_metrics:
                         for performance_metric in performance_metrics:
-                            result = performance_metric(client.get_data_used_for_training(), attack)
-                            results.append(result)
+                            result = performance_metric.measure(clients_data[client_id][1], attack)
+                            results.append({"client_id": client_id, "performance_metric": performance_metric.name, "result": result})
 
             self.aggregate()
-            print(f"Clients update aggregation completed")
 
         return results

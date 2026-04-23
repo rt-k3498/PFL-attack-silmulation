@@ -1,6 +1,6 @@
 from attacks.attack import Attack
 from models.model import Model
-from typing import Dict, Literal, Any
+from typing import Dict, Literal, Any, List, Tuple
 import numpy as np
 import tensorflow as tf
 
@@ -18,7 +18,8 @@ ProtocolInfo = Dict[ProtocolInfoOptions, Any]
 
 class iDLG(Attack):
 
-    def __init__(self, settings: Settings = {}):
+    def __init__(self, seed: int, settings: Settings = {}):
+        self.seed = seed
         super().__init__("iDLG")
         self.max_iterations = settings.get("max_iterations", 1000)
         self.min_loss = settings.get("min_loss", 10**-5)
@@ -29,23 +30,22 @@ class iDLG(Attack):
         self.reconstructed_input = None
         self.reconstructed_label = None
 
-    def reconstruct_label(self, global_model: Model, client_model: Model, learning_rate: float) -> int:
+    def reconstruct_label(self, global_model: Model, client_weights: List[type(np.array)], learning_rate: float) -> int:
         global_model = global_model.model
-        client_model = client_model.model
         global_last_layer_weights = np.array(global_model.layers[-1].get_weights()[0]) #only the weights, not the bias
-        client_last_layer_weights = np.array(client_model.layers[-1].get_weights()[0]) #only the weights, not the bias
+        client_last_layer_weights = np.array(client_weights[-1]) #only the weights, not the bias
 
         client_last_layer_gradients = (client_last_layer_weights - global_last_layer_weights)/(-1 * learning_rate)
 
         return np.argmin(np.sum(client_last_layer_gradients, axis=0))
 
-    def infer_input_dimension(self, model: Model) -> tuple:
+    def infer_input_dimension(self, model: Model) -> Tuple:
         return model.model.input_shape[1:]
 
-    def reconstruct_input(self, client_gradients: list, input_dimensions: tuple, label: int, model: Model) -> np.ndarray:
+    def reconstruct_input(self, client_gradients: list, input_dimensions: Tuple, label: int, model: Model) -> np.ndarray:
         model = model.model
-        dummy_data = tf.Variable(tf.random.uniform((1,) + input_dimensions, minval=0, maxval=255, dtype=tf.float32))
-        label_tensor = tf.constant([label], dtype=tf.int64)
+        dummy_data = tf.Variable(tf.random.normal((1,) + input_dimensions, dtype=tf.float32, seed=self.seed))
+        label_tensor = tf.constant([label], dtype=tf.int32)
         curr_loss = float('inf')
         prev_loss = 0
         iterations = 0
@@ -74,13 +74,13 @@ class iDLG(Attack):
         return dummy_data.numpy()
 
 
-    def run(self, global_model: Model, client_model: Model, other: ProtocolInfo) -> None:
+    def run(self, global_model: Model, client_weights: List[type(np.array)], other: ProtocolInfo) -> None:
         input_dimensions = self.infer_input_dimension(global_model)
-        reconstructed_label = self.reconstruct_label(global_model, client_model, other["learning_rate"])
+        reconstructed_label = self.reconstruct_label(global_model, client_weights, other["learning_rate"])
 
         client_gradients = [
             tf.constant((gw - cw) / other["learning_rate"])
-            for gw, cw in zip(global_model.get_weights(), client_model.get_weights())
+            for gw, cw in zip(global_model.get_weights(), client_weights)
         ]
 
         reconstructed_input = self.reconstruct_input(

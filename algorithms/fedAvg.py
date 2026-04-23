@@ -5,7 +5,8 @@ import tensorflow as tf
 from models.model import Model
 from clients.client import Client
 from attacks.attack import Attack
-from data.data import Data
+from data.data import CIFAR10Data
+from metrics.PerformanceMetric import PerformanceMetric
 
 SettingOptions = Literal[
     "communication_rounds",
@@ -20,9 +21,9 @@ Settings = Dict[SettingOptions, Any]
 
 class FedAvg:
 
-    def __init__(self, model: Model, clients: List[Client], settings: Settings = {}):
+    def __init__(self, model: Model, clients: List[Client], seed: int, settings: Settings = {}):
         self.clients = clients
-        self.init_data = Data().get_x_y(1, 1)
+        self.init_data = CIFAR10Data(seed=seed).get_x_y(1, 1)
         self.model = model
         self.communication_rounds = settings.get("communication_rounds", 1)
         self.client_training_rounds = settings.get("client_training_rounds", 1)
@@ -60,7 +61,7 @@ class FedAvg:
 
         return model
 
-    def run(self, attack: Attack = None, performance_metrics: List[Callable] = None) -> list:
+    def run(self, attack: Attack = None, performance_metrics: List[PerformanceMetric] = None) -> list:
         """
         Run the FedAvg algorithm.
         """
@@ -71,23 +72,25 @@ class FedAvg:
             client.set_training_algorithm(self.client_training_algorithm)
 
         for communication_round in range(self.communication_rounds):
-            print(f"Communication round {communication_round + 1} of {self.communication_rounds}")
+
+            clients_data = {}
 
             for client in self.clients:
                 client.clear_training_data()
-                client.set_model(Model.clone(self.model))
+                client.set_model(self.model.clone())
                 client.train()
-            print(f"Clients model training completed")
+                weights = client.get_weights()
+                data = client.get_data_used_for_training()
+                clients_data[client.id] = (weights, data)
 
             if attack:
-                for client in self.clients:
-                    attack.run(self.model, client.get_model(), {"learning_rate": self.alpha})
+                for client_id in clients_data:
+                    attack.run(self.model, clients_data[client_id][0], {"learning_rate": self.alpha, "num_classes": len(CIFAR10Data._CIFAR_10_CLASSES)})
                     if performance_metrics:
                         for performance_metric in performance_metrics:
-                            result = performance_metric(client.get_data_used_for_training(), attack)
-                            results.append(result)
+                            result = performance_metric.measure(clients_data[client_id][1], attack)
+                            results.append({"client_id": client_id, "performance_metric": performance_metric.name, "result": result})
 
             self.aggregate()
-            print(f"Clients update aggregation completed")
 
         return results
