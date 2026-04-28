@@ -32,7 +32,7 @@ class DLG(Attack):
 
         # LBFGS-specific knobs. Defaults track plgp-main/src/idlg_modified.py
         # (history_size=100, tolerance_grad=1e-9, tolerance_change=1e-11).
-        self.num_correction_pairs = settings.get("num_correction_pairs", 200)
+        self.num_correction_pairs = settings.get("num_correction_pairs", 100)   
         self.tolerance = settings.get("tolerance", 1e-9)
         self.f_relative_tolerance = settings.get("f_relative_tolerance", 1e-11)
         self.max_line_search_iterations = settings.get("max_line_search_iterations", 50)
@@ -41,6 +41,7 @@ class DLG(Attack):
         self.reconstructed_label = None
 
     def loss_function(self, y_pred: tf.Tensor, y_true: tf.Tensor) -> tf.Tensor:
+        # cross-entropy loss function
         y_pred_safe = tf.clip_by_value(y_pred, 1e-12, 1.0 - 1e-12)
         return -tf.reduce_sum(y_true * tf.math.log(y_pred_safe))
 

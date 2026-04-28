@@ -49,7 +49,10 @@ class LeNet(CNN): # LeNet-5
             tf.keras.layers.Flatten(),
 
             # F6
-            tf.keras.layers.Dense(84, activation='sigmoid', kernel_initializer=tf.keras.initializers.GlorotUniform(seed=self.seed)),
+            tf.keras.layers.Dense(256, activation='sigmoid', kernel_initializer=tf.keras.initializers.GlorotUniform(seed=self.seed)),
+
+            # F7
+            tf.keras.layers.Dense(128, activation='sigmoid', kernel_initializer=tf.keras.initializers.GlorotUniform(seed=self.seed)),
 
             # Output
             tf.keras.layers.Dense(10, activation='softmax', kernel_initializer=tf.keras.initializers.GlorotUniform(seed=self.seed))

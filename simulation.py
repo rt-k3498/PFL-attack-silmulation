@@ -5,6 +5,7 @@ from algorithms.per_fedAvg import PerFedAvg
 from algorithms.fedAvg import FedAvg
 from algorithms.fedPer import FedPer
 from attacks.DLG import DLG
+from attacks.InvertingGradients import InvertingGradients
 from metrics.MSE_metric import MSE_metric
 from metrics.PSNR_metric import PSNR_metric
 from metrics.SSIM_metric import SSIM_metric
@@ -21,7 +22,7 @@ from typing import Dict, Tuple
 
 seed = 50
 I = 10 # number of images
-J = 1 # number of runs
+J = 10 # number of runs
 
 def reseed(seed: int) -> None:
     np.random.seed(seed)
@@ -63,8 +64,11 @@ class _SeededAttack:
 
 reseed(seed)
 
+batch_size = 1 # number of images per client
 ds = CIFAR10Data(seed=seed)
-x_data_list, y_data_list = ds.get_x_y(1, I)
+x_data_list, y_data_list = ds.get_x_y(batch_size, I)
+
+local_training_rounds = 1 # number of local training rounds per client
 
 mse_metric = MSE_metric()
 psnr_metric = PSNR_metric()
@@ -82,65 +86,65 @@ loss_function = tf.keras.losses.CategoricalCrossentropy()
 algos = {
     "FedAvg": lambda model, clients: FedAvg(model, clients, seed=seed, settings={
         "communication_rounds": 1,
-        "client_training_rounds": 1,
-        "client_training_batch_size": 1,
+        "client_training_rounds": local_training_rounds,
+        "client_training_batch_size": batch_size,
         "loss_function": loss_function,
     }),
     "FedPer(K_p=1)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
         "communication_rounds": 1,
-        "client_training_rounds": 1,
+        "client_training_rounds": local_training_rounds,
         "alpha": 0.1,
         "K_p": 2, 
-        "client_training_batch_size": 1,
+        "client_training_batch_size": batch_size,
         "loss_function": loss_function,
     }),
     "FedPer(K_p=2)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
         "communication_rounds": 1,
-        "client_training_rounds": 1,
+        "client_training_rounds": local_training_rounds,
         "alpha": 0.1,
         "K_p": 2,
-        "client_training_batch_size": 1,
+        "client_training_batch_size": batch_size,
         "loss_function": loss_function,
     }),
     "FedPer(K_p=3)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
         "communication_rounds": 1,
-        "client_training_rounds": 1,
+        "client_training_rounds": local_training_rounds,
         "alpha": 0.1,
         "K_p": 3,
-        "client_training_batch_size": 1,
+        "client_training_batch_size": batch_size,
         "loss_function": loss_function,
     }),
     "FedPer(K_p=4)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
         "communication_rounds": 1,
-        "client_training_rounds": 1,
+        "client_training_rounds": local_training_rounds,
         "alpha": 0.1,
         "K_p": 4,
-        "client_training_batch_size": 1,
+        "client_training_batch_size": batch_size,
         "loss_function": loss_function,
     }),
     "Per-FedAvg(FO)": lambda model, clients: PerFedAvg(model, clients, seed=seed, settings={
         "communication_rounds": 1,
-        "client_training_rounds": 1,
+        "client_training_rounds": local_training_rounds,
         "client_adaptation_rounds": 1,
-        "client_training_batch_size": 1,
+        "client_training_batch_size": batch_size,
         "reuse_data_batches": True,
         "local_training_approximation": "FO",
         "loss_function": loss_function,
     }),
     "Per-FedAvg(HF)": lambda model, clients: PerFedAvg(model, clients, seed=seed, settings={
         "communication_rounds": 1,
-        "client_training_rounds": 1,
+        "client_training_rounds": local_training_rounds,
         "client_adaptation_rounds": 1,
-        "client_training_batch_size": 1,
+        "client_training_batch_size": batch_size,
         "reuse_data_batches": True,
         "local_training_approximation": "HF",
         "loss_function": loss_function,
     }),
     "Per-FedAvg(HVP)": lambda model, clients: PerFedAvg(model, clients, seed=seed, settings={
         "communication_rounds": 1,
-        "client_training_rounds": 1,
+        "client_training_rounds": local_training_rounds,
         "client_adaptation_rounds": 1,
-        "client_training_batch_size": 1,
+        "client_training_batch_size": batch_size,
         "reuse_data_batches": True,
         "local_training_approximation": "HVP",
         "loss_function": loss_function,
@@ -150,6 +154,16 @@ algos = {
 attacks = {
     "DLG": lambda: DLG(seed=seed, settings={
         "max_iterations": 500,
+        "f_relative_tolerance": 1e-30,
+        "max_line_search_iterations": 300,
+        "num_correction_pairs": 100,
+        "tolerance": 1e-30,
+    }),
+    "InvertingGradients": lambda: InvertingGradients(seed=seed, settings={
+        "max_iterations": 500,
+        "init_step_size": 0.1,
+        "final_step_size": 0.01,
+        "alpha": 1e-14,
     }),
 }
 

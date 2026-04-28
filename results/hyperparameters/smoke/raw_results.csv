@@ -1,0 +1,3 @@
+Attack,Round,Candidate,num_correction_pairs,max_line_search_iterations,tolerance,f_relative_tolerance,init_step_size,final_step_size,alpha,Image,Client,Input MSE,Input PSNR,Input SSIM
+DLG,1,1,100,100,1e-11,1e-11,,,,0,1,0.023605652153491974,16.269838333129883,0.6343949437141418
+InvertingGradients,1,1,,,,,0.1,0.01,1e-10,0,1,0.012420706450939178,19.058536529541016,0.6954888701438904
