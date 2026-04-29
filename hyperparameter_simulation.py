@@ -24,11 +24,12 @@ from models.LeNet import LeNet
 
 
 SEED = 50
-IMAGE_COUNT = 5
+IMAGE_COUNT = 3
 ROUNDS = 3
 VALUES_PER_PARAMETER = 5
 MAX_ITERATIONS = 500
 OUTPUT_DIR = Path("results/hyperparameters")
+ATTACK_CHOICES = ("DLG", "InvertingGradients", "all")
 
 DLG_INITIAL_GRID = {
     "num_correction_pairs": [20, 50, 100, 150, 200],
@@ -319,6 +320,7 @@ def run_attack_search(
     trials: List[Dict[str, Any]],
     rounds: int,
     values_per_parameter: int,
+    image_count: int,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     grid = initial_grid
     all_rows = []
@@ -331,8 +333,8 @@ def run_attack_search(
 
         for candidate_idx, settings in enumerate(candidates, start=1):
             print(
-                f"[{attack_name}] round {round_idx}/{rounds} "
-                f"candidate {candidate_idx}/{total}: {settings}"
+                f"[attack={attack_name} images={image_count}] "
+                f"round {round_idx}/{rounds} candidate {candidate_idx}/{total}: {settings}"
             )
             candidate_rows = run_candidate(
                 attack_name,
@@ -442,6 +444,18 @@ def parse_args() -> argparse.Namespace:
         help="Run one image, one round, and one candidate per attack for verification.",
     )
     parser.add_argument(
+        "--attack",
+        choices=ATTACK_CHOICES,
+        default="all",
+        help="Choose which attack search to run.",
+    )
+    parser.add_argument(
+        "--image-count",
+        type=int,
+        default=IMAGE_COUNT,
+        help="Number of images to evaluate in non-smoke runs.",
+    )
+    parser.add_argument(
         "--output-dir",
         default=str(OUTPUT_DIR),
         help="Directory for raw_results.csv and results.txt.",
@@ -453,7 +467,10 @@ def main() -> None:
     args = parse_args()
     reseed(SEED)
 
-    image_count = 1 if args.smoke else IMAGE_COUNT
+    if args.image_count < 1:
+        raise ValueError("--image-count must be at least 1")
+
+    image_count = 1 if args.smoke else args.image_count
     rounds = 1 if args.smoke else ROUNDS
     values_per_parameter = 1 if args.smoke else VALUES_PER_PARAMETER
 
@@ -472,16 +489,27 @@ def main() -> None:
     summary_rows = []
     round_best_rows = []
 
-    for attack_name, grid in [
+    attack_grids = [
         ("DLG", dlg_grid),
         ("InvertingGradients", inverting_grid),
-    ]:
+    ]
+    if args.attack != "all":
+        attack_grids = [entry for entry in attack_grids if entry[0] == args.attack]
+
+    selected_attacks = ", ".join(name for name, _ in attack_grids)
+    print(
+        f"Starting hyperparameter search: attacks={selected_attacks} "
+        f"images={image_count} rounds={rounds} smoke={args.smoke}"
+    )
+
+    for attack_name, grid in attack_grids:
         attack_raw_rows, attack_summary_rows, attack_best_rows = run_attack_search(
             attack_name,
             grid,
             trials,
             rounds,
             values_per_parameter,
+            image_count,
         )
         raw_rows.extend(attack_raw_rows)
         summary_rows.extend(attack_summary_rows)

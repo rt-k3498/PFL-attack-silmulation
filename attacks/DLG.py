@@ -103,7 +103,7 @@ class DLG(Attack):
 
         return dummy_input_data.numpy(), dummy_label_softmax.numpy()
 
-    def run(self, global_model: Model, client_weights: List[type(np.array)], other: ProtocolInfo) -> None:
+    def run(self, global_model: Model, client_weights: List[np.array], other: ProtocolInfo) -> None:
         input_dimensions = self.infer_input_dimension(global_model)
         first_n_layers = len(client_weights)
 
