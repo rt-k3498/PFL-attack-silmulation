@@ -32,22 +32,23 @@ OUTPUT_DIR = Path("results/hyperparameters")
 ATTACK_CHOICES = ("DLG", "InvertingGradients", "all")
 
 DLG_INITIAL_GRID = {
-    "num_correction_pairs": [50, 100, 150,],
-    "max_line_search_iterations": [ 50, 100, 200,],
-    "tolerance": [ 1e-20, 1e-11, 1e-9,],
-    "f_relative_tolerance": [ 1e-20, 1e-11, 1e-9,],
+    "num_correction_pairs": [50, 100, 150],
+    "max_line_search_iterations": [100, 200, 300],
+    "tolerance": [ 1e-18, 1e-15, 1e-12],
+    "f_relative_tolerance": [ 1e-18, 1e-15, 1e-12],
 }
 
 INVERTING_GRADIENTS_INITIAL_GRID = {
-    "init_step_size": [ 0.05, 0.1, 0.2],
-    "final_step_size": [ 0.003, 0.01, 0.03],
-    "alpha": [ 1e-14, 1e-10, 1e-6],
+    "init_step_size": [ 0.01, 0.1, 1.0],
+    "final_step_size": [ 0.001, 0.01, 0.1],
+    "alpha": [ 1e-14, 1e-13, 1e-12],
 }
 
 INTEGER_PARAMETERS = {
     "num_correction_pairs",
     "max_line_search_iterations",
 }
+POSITIVE_FLOAT_FLOOR = float(np.nextafter(0.0, 1.0))
 
 
 class _SeededAttack:
@@ -153,41 +154,45 @@ def make_grid(settings_grid: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
     return candidates
 
 
-def log_refined_values(best: float, count: int) -> List[float]:
+def refined_scale(previous_values: List[Any], count: int) -> float:
+    if count != 3:
+        raise ValueError("Grid refinement requires VALUES_PER_PARAMETER == 3")
+
+    sorted_values = sorted(float(v) for v in previous_values)
+    if len(sorted_values) != 3:
+        raise ValueError("Grid refinement requires exactly 3 values per parameter")
+
+    gaps = [
+        sorted_values[idx + 1] - sorted_values[idx]
+        for idx in range(len(sorted_values) - 1)
+    ]
+    current_scale = sum(gaps) / len(gaps)
+    return current_scale / 2.0
+
+
+def float_refined_values(best: float, previous_values: List[Any], count: int) -> List[float]:
     if count == 1:
-        return [best]
+        return [max(float(best), POSITIVE_FLOAT_FLOOR)]
 
-    best = max(float(best), 1e-300)
-    half_width = 1.0
-    offsets = np.linspace(-half_width, half_width, count)
-    return [float(best * (10.0 ** offset)) for offset in offsets]
+    scale = refined_scale(previous_values, count)
+    values = [float(best) - scale, float(best), float(best) + scale]
+    values[0] = max(values[0], POSITIVE_FLOAT_FLOOR)
+    return values
 
 
-def int_refined_values(best: int, previous_values: List[int], count: int) -> List[int]:
+def int_refined_values(best: int, previous_values: List[Any], count: int) -> List[int]:
     if count == 1:
         return [max(1, int(best))]
 
-    previous_values = sorted(set(int(v) for v in previous_values))
-    if len(previous_values) > 1:
-        nearest_gap = min(
-            abs(int(best) - value)
-            for value in previous_values
-            if value != int(best)
+    scale = refined_scale(previous_values, count)
+    rounded = [max(1, int(round(value))) for value in (best - scale, best, best + scale)]
+    values = sorted(set(rounded))
+    if len(values) != 3:
+        raise ValueError(
+            f"Integer refinement for best={best} and previous_values={previous_values} "
+            "did not produce 3 distinct values after rounding"
         )
-        step = max(1, int(round(nearest_gap / 2)))
-    else:
-        step = max(1, int(round(max(1, int(best)) * 0.25)))
-
-    middle = count // 2
-    values = [max(1, int(best) + (idx - middle) * step) for idx in range(count)]
-    values = sorted(set(values))
-
-    next_value = max(values) + step
-    while len(values) < count:
-        values.append(next_value)
-        next_value += step
-
-    return sorted(values[:count])
+    return values
 
 
 def refine_grid(
@@ -201,7 +206,7 @@ def refine_grid(
         if name in INTEGER_PARAMETERS:
             refined[name] = int_refined_values(int(best), previous_values, count)
         else:
-            refined[name] = log_refined_values(float(best), count)
+            refined[name] = float_refined_values(float(best), previous_values, count)
     return refined
 
 
