@@ -153,14 +153,14 @@ algos = {
 
 attacks = {
     "DLG": lambda: DLG(seed=seed, settings={
-        "max_iterations": 500,
+        "max_iterations": 300,
         "f_relative_tolerance": 1e-30,
         "max_line_search_iterations": 300,
         "num_correction_pairs": 100,
         "tolerance": 1e-30,
     }),
     "InvertingGradients": lambda: InvertingGradients(seed=seed, settings={
-        "max_iterations": 500,
+        "max_iterations": 300,
         "init_step_size": 0.1,
         "final_step_size": 0.01,
         "alpha": 1e-14,

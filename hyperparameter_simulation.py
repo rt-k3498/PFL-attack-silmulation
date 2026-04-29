@@ -24,24 +24,24 @@ from models.LeNet import LeNet
 
 
 SEED = 50
-IMAGE_COUNT = 3
+IMAGE_COUNT = 1
 ROUNDS = 3
-VALUES_PER_PARAMETER = 5
-MAX_ITERATIONS = 500
+VALUES_PER_PARAMETER = 3
+MAX_ITERATIONS = 300
 OUTPUT_DIR = Path("results/hyperparameters")
 ATTACK_CHOICES = ("DLG", "InvertingGradients", "all")
 
 DLG_INITIAL_GRID = {
-    "num_correction_pairs": [20, 50, 100, 150, 200],
-    "max_line_search_iterations": [20, 50, 100, 200, 300],
-    "tolerance": [1e-30, 1e-20, 1e-11, 1e-9, 1e-7],
-    "f_relative_tolerance": [1e-30, 1e-20, 1e-11, 1e-9, 1e-7],
+    "num_correction_pairs": [50, 100, 150,],
+    "max_line_search_iterations": [ 50, 100, 200,],
+    "tolerance": [ 1e-20, 1e-11, 1e-9,],
+    "f_relative_tolerance": [ 1e-20, 1e-11, 1e-9,],
 }
 
 INVERTING_GRADIENTS_INITIAL_GRID = {
-    "init_step_size": [0.03, 0.05, 0.1, 0.2, 0.3],
-    "final_step_size": [0.001, 0.003, 0.01, 0.03, 0.1],
-    "alpha": [1e-16, 1e-14, 1e-10, 1e-6, 1e-4],
+    "init_step_size": [ 0.05, 0.1, 0.2],
+    "final_step_size": [ 0.003, 0.01, 0.03],
+    "alpha": [ 1e-14, 1e-10, 1e-6],
 }
 
 INTEGER_PARAMETERS = {
