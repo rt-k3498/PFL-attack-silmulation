@@ -12,10 +12,14 @@ class VisualMetric(PerformanceMetric):
         self,
         true_dir: str = "./results/true_images",
         reconstructed_dir: str = "./results/reconstructed_images",
+        specific_folder: str | Path | None = None,
     ):
         super().__init__("VisualMetric")
         self.true_dir = Path(true_dir)
         self.reconstructed_dir = Path(reconstructed_dir)
+        if specific_folder is not None:
+            self.true_dir = self.true_dir / specific_folder
+            self.reconstructed_dir = self.reconstructed_dir / specific_folder
         self.tag = ""
         self.true_dir.mkdir(parents=True, exist_ok=True)
         self.reconstructed_dir.mkdir(parents=True, exist_ok=True)

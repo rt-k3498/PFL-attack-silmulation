@@ -115,8 +115,12 @@ class AttackResultHandler(ResultHandler):
         self,
         metrics: Sequence[Any] | None = None,
         csv_path: str | Path = "results/attack_results/raw_results.csv",
+        specific_folder: str | Path | None = None,
     ):
         self.metrics = list(metrics or [])
+        csv_path = Path(csv_path)
+        if specific_folder is not None:
+            csv_path = csv_path.parent / specific_folder / csv_path.name
         super().__init__(csv_path)
 
     def append_attack_results(
@@ -171,8 +175,12 @@ class AlgorithmResultHandler(ResultHandler):
         self,
         metrics: Sequence[Any] | None = None,
         csv_path: str | Path = "results/algorithm_results/raw_results.csv",
+        specific_folder: str | Path | None = None,
     ):
         self.metrics = list(metrics or [])
+        csv_path = Path(csv_path)
+        if specific_folder is not None:
+            csv_path = csv_path.parent / specific_folder / csv_path.name
         super().__init__(csv_path)
 
     def _prepare_metric_context(self, clients: Sequence[Any], algorithm_option: str) -> Dict[str, Any]:

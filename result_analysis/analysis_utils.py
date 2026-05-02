@@ -56,6 +56,40 @@ def _load_csv(path: str | Path) -> List[Dict[str, str]]:
         return list(csv.DictReader(file))
 
 
+def combine_csvs(
+    input_paths: Iterable[str | Path],
+    output_path: str | Path,
+) -> Path:
+    """
+    Read every CSV in `input_paths`, take the union of their column headers
+    (preserving first-seen order), concatenate all rows, and write the result
+    to `output_path`. Missing columns are written as empty strings. Returns
+    the resolved output path.
+    """
+    fieldnames: List[str] = []
+    seen: set[str] = set()
+    all_rows: List[Dict[str, str]] = []
+
+    for path in input_paths:
+        rows = _load_csv(path)
+        for row in rows:
+            for key in row.keys():
+                if key not in seen:
+                    seen.add(key)
+                    fieldnames.append(key)
+        all_rows.extend(rows)
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in all_rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+    return output_path
+
+
 def load_attack_results(path: str | Path = ATTACK_RESULTS_CSV):
     return _maybe_dataframe(_load_csv(path))
 
