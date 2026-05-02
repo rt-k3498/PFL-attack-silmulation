@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from typing import List, Dict, Tuple
+from typing import Any, List, Dict, Tuple
 from attacks.attack import Attack
 from metrics.PerformanceMetric import PerformanceMetric
 
@@ -10,17 +10,30 @@ class SSIM_metric(PerformanceMetric):
         self.max_val = max_val
         self.filter_size = filter_size
 
-    def measure(self, used_in_training_data: List[Tuple[np.ndarray, np.ndarray]], attack: Attack) -> List[Dict[str, float]]:
+    @staticmethod
+    def _as_batch(value: Any) -> np.ndarray:
+        arr = np.asarray(value, dtype=np.float32)
+        if arr.ndim == 3:
+            return arr[np.newaxis, ...]
+        return arr
+
+    def measure(
+        self,
+        used_in_training_data: Tuple[np.ndarray, np.ndarray],
+        attack: Attack,
+        context: Dict[str, Any] | None = None,
+    ) -> List[Dict[str, float]]:
+        reconstructed_input = self._as_batch(attack.reconstructed_input)
+        x, _y = used_in_training_data
+        actual_input = self._as_batch(x)
+
         results = []
-        reconstructed_input = tf.convert_to_tensor(attack.reconstructed_input, dtype=tf.float32)
-        for (x, _y) in used_in_training_data:
-            actual_input = tf.convert_to_tensor(x, dtype=tf.float32)
+        for sample_index in range(min(len(actual_input), len(reconstructed_input))):
             ssim = tf.image.ssim(
-                reconstructed_input,
-                actual_input,
+                tf.convert_to_tensor(reconstructed_input[sample_index:sample_index + 1], dtype=tf.float32),
+                tf.convert_to_tensor(actual_input[sample_index:sample_index + 1], dtype=tf.float32),
                 max_val=self.max_val,
                 filter_size=self.filter_size,
             )
-            input_ssim = float(tf.reduce_mean(ssim).numpy())
-            results.append({"input_ssim": input_ssim})
+            results.append({"input_ssim": float(tf.reduce_mean(ssim).numpy())})
         return results

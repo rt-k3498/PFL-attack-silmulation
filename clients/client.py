@@ -15,20 +15,30 @@ class Client:
         self.data_x = x[0]
         self.data_y = y[0]
         self.used_in_training_data: List[Tuple[tf.Tensor, tf.Tensor]] = []
-        self.model = None
+        self.model: Model | None = None
         self.training_algorithm = None
         self.send_partial_layers: bool = False
         self.send_first_n_layers: int | None = None
         self._send_first_n_layers: int | None = None
         self.store_last_n_layers: int | None = None
         self._store_last_n_layers: int | None = None
-        self._last_n_layer_weights: List[type(np.array)] | None = None
+        self._last_n_layer_weights: List[np.array] | None = None
+        self._get_sample_index = 0
 
-    def sample(self, n: int) -> Tuple[tf.Tensor, tf.Tensor]:
+    def random_samples(self, n: int) -> Tuple[tf.Tensor, tf.Tensor]:
         indices = tf.random.shuffle(tf.range(tf.shape(self.data_x)[0]), seed=self.seed)[:n]
         x = tf.gather(self.data_x, indices)
         y = tf.gather(self.data_y, indices)
         self.used_in_training_data.append((x, y))
+        return x, y
+    
+    def get_sample(self)-> Tuple[tf.Tensor, tf.Tensor]:
+        if self._get_sample_index >= tf.shape(self.data_x)[0]:
+            raise Exception("No more samples available")
+        x = tf.gather(self.data_x, [self._get_sample_index])
+        y = tf.gather(self.data_y, [self._get_sample_index])
+        self.used_in_training_data.append((x, y))
+        self._get_sample_index += 1
         return x, y
 
     def get_data_used_for_training(self) -> List[Tuple[tf.Tensor, tf.Tensor]]:
@@ -38,14 +48,33 @@ class Client:
         self.used_in_training_data = []
 
     def set_model(self, model: Model) -> None:
-        self.model = model
-        if self.send_partial_layers:
-            self._last_n_layer_weights = self.model.get_weights()[-self._store_last_n_layers:]
+        if self.model: 
+            if self.send_partial_layers:
+                if self._last_n_layer_weights:
+                    self.model.set_weights(model.get_weights()[:self._send_first_n_layers] + self._last_n_layer_weights)
+                    return
+                self.model.set_weights(model.get_weights())
+                self._last_n_layer_weights = self.model.get_weights()[-self._store_last_n_layers:]
+            else: 
+                self.model.set_weights(model.get_weights())
+        else:
+            self.model = model
+            if self.send_partial_layers:
+                self._last_n_layer_weights = self.model.get_weights()[-self._store_last_n_layers:]
 
     def get_model(self) -> Model:
         if self.model is None:
             raise Exception("Model not set")
         return self.model
+    
+    def set_data(self, data_x: List[tf.Tensor], data_y: List[tf.Tensor]) -> None:
+        x_y = list(zip(data_x, data_y))
+        rng = np.random.default_rng(self.seed)
+        rng.shuffle(x_y)
+
+        x, y = zip(*x_y)
+        self.data_x = list(x)
+        self.data_y = list(y)
 
     def clear_model(self) -> None:
         self.model = None
@@ -64,15 +93,12 @@ class Client:
         if self.training_algorithm is None:
             raise Exception("Training algorithm not set")
 
-        if self.send_partial_layers:
-            self.model.set_weights(self.model.get_weights()[:self._send_first_n_layers] + self._last_n_layer_weights)
-
         self.model = self.training_algorithm(self.model, self)
 
         if self.send_partial_layers:
             self._last_n_layer_weights = self.model.get_weights()[-self._store_last_n_layers:]
 
-    def get_weights(self) -> List[type(np.array)]:
+    def get_weights(self) -> List[np.array]:
         if self.send_partial_layers is False:
             return self.model.get_weights()
         return self.model.get_weights()[:self._send_first_n_layers]
@@ -87,5 +113,7 @@ class Client:
     def remove_partial_layer_rule(self) -> None:
         self.send_partial_layers = False
         self.store_last_n_layers = None
+        self._store_last_n_layers = None
         self.send_first_n_layers = None
+        self._send_first_n_layers = None
 

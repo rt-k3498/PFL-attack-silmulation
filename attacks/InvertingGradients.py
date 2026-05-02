@@ -33,17 +33,13 @@ class InvertingGradients(Attack):
         self.alpha = settings.get("alpha", 0.1)
         self.use_signed_adam = settings.get("use_signed_adam", True)
 
-        # CosineDecay's positional signature is (initial_learning_rate,
-        # decay_steps, alpha=0.0, ...). The previous call passed
-        # final_step_size as decay_steps, which collapsed the schedule on
-        # step 1. Correct mapping: decay_steps=max_iterations and
-        # alpha=final/init so the LR cosine-anneals from init to final.
+    def _make_optimizer(self) -> tf.keras.optimizers.Optimizer:
         learning_rate_schedule = tf.keras.optimizers.schedules.CosineDecay(
             initial_learning_rate=self.init_step_size,
             decay_steps=self.max_iterations,
             alpha=self.final_step_size / self.init_step_size,
         )
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate_schedule)
+        return tf.keras.optimizers.Adam(learning_rate=learning_rate_schedule)
 
 
     def infer_input_dimension(self, model: Model) -> Tuple:
@@ -55,18 +51,14 @@ class InvertingGradients(Attack):
 
     def reconstruct_input_and_label(self, client_gradients: list, first_n_layers: int, input_dimensions: Tuple, num_classes: int, model: Model) -> Tuple[np.ndarray, int]:
         model = model.model
-        # Sigmoid reparametrization keeps pixels in (0,1) smoothly, matching
-        # the box constraint used by Geiping et al. 2020 without an explicit
-        # projection step. Same trick as attacks/DLG.py.
         raw_image = tf.Variable(
             tf.random.uniform((1,) + input_dimensions, dtype=tf.float32, seed=self.seed)
         )
         dummy_label = tf.Variable(
             tf.random.uniform((1, num_classes), dtype=tf.float32, seed=self.seed)
         )
+        optimizer = self._make_optimizer()
 
-        # The client gradient vector is constant across the optimization, so
-        # flatten it once outside the loop.
         client_flat = tf.concat([tf.reshape(g, [-1]) for g in client_gradients], axis=0)
         client_norm = tf.norm(client_flat)
 
@@ -78,16 +70,9 @@ class InvertingGradients(Attack):
                 with tf.GradientTape() as inner_tape:
                     y_pred = model(dummy_data, training=False)
                     dummy_y_softmax = tf.nn.softmax(dummy_label, axis=1)
-                    # loss_function(y_pred, y_true) computes -sum(y_true * log(y_pred));
-                    # arg order matches attacks/DLG.py and the categorical CE the
-                    # client actually trains with in simulation.py.
                     loss = self.loss_function(y_pred, dummy_y_softmax)
                 gradients = inner_tape.gradient(loss, model.trainable_variables)
 
-                # Hand-built cosine on flattened gradients. tf.keras.losses.
-                # CosineSimilarity returns -cos which makes "1 - sim" actually
-                # compute "1 + cos"; building it explicitly avoids that bug and
-                # keeps the op inside the GradientTape (NumPy would not).
                 dummy_flat = tf.concat(
                     [tf.reshape(g, [-1]) for g in gradients[:first_n_layers]], axis=0
                 )
@@ -100,14 +85,13 @@ class InvertingGradients(Attack):
 
             grads = outer_tape.gradient(gradient_loss, [raw_image, dummy_label])
             if self.use_signed_adam:
-                # Geiping et al. Algorithm 1: x <- x - tau * sign(Adam-dir).
                 grads = [tf.sign(g) for g in grads]
-            self.optimizer.apply_gradients(zip(grads, [raw_image, dummy_label]))
+            optimizer.apply_gradients(zip(grads, [raw_image, dummy_label]))
 
         return tf.sigmoid(raw_image).numpy(), tf.nn.softmax(dummy_label, axis=1).numpy()
 
 
-    def run(self, global_model: Model, client_weights: List[type(np.array)], other: ProtocolInfo) -> None:
+    def run(self, global_model: Model, client_weights: List[np.array], other: ProtocolInfo) -> None:
         input_dimensions = self.infer_input_dimension(global_model)
         first_n_layers = len(client_weights)
 

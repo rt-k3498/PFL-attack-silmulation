@@ -1,12 +1,14 @@
 from typing import Dict, Literal, Any, List, Callable
 import numpy as np
 import tensorflow as tf
+from rich import print
 
 from models.model import Model
 from clients.client import Client
 from attacks.attack import Attack
-from data.data import CIFAR10Data  # used in __init__ for init_data
+from data.data import CIFAR10Data  
 from metrics.PerformanceMetric import PerformanceMetric
+from metrics.ModelPerformanceMetric import ModelPerformanceMetric
 
 SettingOptions = Literal[
     "communication_rounds", 
@@ -19,7 +21,6 @@ SettingOptions = Literal[
     "loss_function", 
     "metrics",
     "local_training_approximation",
-    "reuse_data_batches",
     "hf_delta",
 ]
 Settings = Dict[SettingOptions, Any]
@@ -29,7 +30,6 @@ class PerFedAvg:
     
     def __init__(self, model: Model, clients: List[Client], seed: int, settings: Settings = {}):
         self.clients = clients
-        self.init_data = CIFAR10Data(seed=seed).get_x_y(1, 1) # (x, y)
         self.model = model
         self.communication_rounds = settings.get("communication_rounds", 1)
         self.client_adaptation_rounds = settings.get("client_adaptation_rounds", 1)
@@ -41,7 +41,8 @@ class PerFedAvg:
         self.loss_function = settings.get("loss_function", tf.keras.losses.MeanSquaredError())
         self.metrics = settings.get("metrics", ["accuracy"])
         self.local_training_approximation = settings.get("local_training_approximation", "FO")
-        self.reuse_data_batches = settings.get("reuse_data_batches", False)
+        self.name = f"Per-FedAvg({self.local_training_approximation})"
+        self.model_metric_option = "perFedAvg"
         self.hf_delta = settings.get("hf_delta", 1e-2)
 
         if self.local_training_approximation not in self.local_training_approximation_options:
@@ -52,7 +53,7 @@ class PerFedAvg:
         """
         Aggregate the client models into the global model.
         """
-        weights = [client.get_model().get_weights() for client in self.clients]
+        weights = [client.get_weights() for client in self.clients]
         if not weights:
             return
         averaged = [np.mean(np.stack(ws, axis=0), axis=0) for ws in zip(*weights)]
@@ -69,7 +70,7 @@ class PerFedAvg:
         """
         for _ in range(self.client_training_rounds):
             original_weights = model.get_weights()
-            x, y = client.sample(self.client_training_batch_size)
+            x, y = client.get_sample()
 
             with tf.GradientTape() as inner_tape:
                 y_pred = model.model(x, training=True)
@@ -116,7 +117,7 @@ class PerFedAvg:
         """
         for _ in range(self.client_training_rounds):
             original_weights = model.get_weights()
-            x, y = client.sample(self.client_training_batch_size)
+            x, y = client.get_sample()
 
             with tf.GradientTape() as inner_tape:
                 y_pred = model.model(x, training=True)
@@ -162,44 +163,23 @@ class PerFedAvg:
         return model
 
     def _FO_training_algorithm(self, model: Model, client: Client) -> Model:
-        if self.reuse_data_batches:
-            for _ in range(self.client_training_rounds):
-                original_weights = model.get_weights()
-                x, y = client.sample(self.client_training_batch_size)
-                for _ in range(self.client_adaptation_rounds):
-                    with tf.GradientTape() as tape:
-                        y_pred = model.model(x, training=True)
-                        loss = self.loss_function(y, y_pred)
-                    gradients = tape.gradient(loss, model.model.trainable_variables)
-                    new_weights = [weight - self.alpha * gradient for weight, gradient in zip(model.model.trainable_variables, gradients)]
-                    model.set_weights(new_weights)
-
+        for _ in range(self.client_training_rounds):
+            original_weights = model.get_weights()
+            x, y = client.get_sample()
+            for _ in range(self.client_adaptation_rounds):
                 with tf.GradientTape() as tape:
                     y_pred = model.model(x, training=True)
                     loss = self.loss_function(y, y_pred)
                 gradients = tape.gradient(loss, model.model.trainable_variables)
-                meta_weights = [w_orig - self.beta * gradient for w_orig, gradient in zip(original_weights, gradients)]
-                model.set_weights(meta_weights)
-        else:
-            for _ in range(self.client_training_rounds):
-                original_weights = model.get_weights()
-                for _ in range(self.client_adaptation_rounds):
-                    x, y = client.sample(self.client_training_batch_size)
-                    with tf.GradientTape() as tape:
-                        y_pred = model.model(x, training=True)
-                        loss = self.loss_function(y, y_pred)
-                    gradients = tape.gradient(loss, model.model.trainable_variables)
-                    new_weights = [weight - self.alpha * gradient for weight, gradient in zip(model.model.trainable_variables, gradients)]
-                    model.set_weights(new_weights)
+                new_weights = [weight - self.alpha * gradient for weight, gradient in zip(model.model.trainable_variables, gradients)]
+                model.set_weights(new_weights)
 
-                x, y = client.sample(self.client_training_batch_size)
-                with tf.GradientTape() as tape:
-                    y_pred = model.model(x, training=True)
-                    loss = self.loss_function(y, y_pred)
-                gradients = tape.gradient(loss, model.model.trainable_variables)
-                meta_weights = [w_orig - self.beta * gradient for w_orig, gradient in zip(original_weights, gradients)]
-                model.set_weights(meta_weights)
-
+            with tf.GradientTape() as tape:
+                y_pred = model.model(x, training=True)
+                loss = self.loss_function(y, y_pred)
+            gradients = tape.gradient(loss, model.model.trainable_variables)
+            meta_weights = [w_orig - self.beta * gradient for w_orig, gradient in zip(original_weights, gradients)]
+            model.set_weights(meta_weights)
         return model
 
     def client_training_algorithm(self, model: Model, client: Client) -> Model:
@@ -216,37 +196,80 @@ class PerFedAvg:
             raise Exception("Invalid local training approximation")
 
 
-    def run(self, attack: Attack = None, performance_metrics: List[PerformanceMetric] = None) -> list:
+    def run(
+        self,
+        attack: Attack = None,
+        attack_performance_metrics: List[PerformanceMetric] = None,
+        model_performance_metrics: List[ModelPerformanceMetric] = None,
+        result_handlers: List[Any] = None,
+    ) -> list:
         """
         Run the PerFedAvg algorithm.
         """
 
-        self.model.model(self.init_data[0][0])
-        results = []
+        attack_results = []
+        performance_results = []
+        result_handlers = result_handlers or []
+        attack_result_handlers = [
+            handler for handler in result_handlers
+            if hasattr(handler, "append_attack_results")
+        ]
+        algorithm_result_handlers = [
+            handler for handler in result_handlers
+            if hasattr(handler, "append_algorithm_results")
+        ]
 
         for client in self.clients:
             client.set_training_algorithm(self.client_training_algorithm)
 
-        for communication_round in range(self.communication_rounds):
+        for idx in range(self.communication_rounds):
+            print(f"[yellow]Communication round {idx + 1}/{self.communication_rounds}[/yellow]")
 
             clients_data = {}
+
+            print("[blue]Training clients...[/blue]")
 
             for client in self.clients:
                 client.clear_training_data()
                 client.set_model(self.model.clone())
                 client.train()
                 weights = client.get_weights()
-                data = client.get_data_used_for_training()
+                data = client.get_data_used_for_training()[-1]
                 clients_data[client.id] = (weights, data)
 
             if attack:
+                print(f"[blue]Running {attack.name} attack...[/blue]")
                 for client_id in clients_data:
                     attack.run(self.model, clients_data[client_id][0], {"learning_rate": self.beta, "num_classes": len(CIFAR10Data._CIFAR_10_CLASSES)})
-                    if performance_metrics:
-                        for performance_metric in performance_metrics:
+                    for handler in attack_result_handlers:
+                        handler.append_attack_results(
+                            self,
+                            attack,
+                            idx + 1,
+                            client_id,
+                            clients_data[client_id][1],
+                        )
+                    if attack_performance_metrics:
+                        for performance_metric in attack_performance_metrics:
                             result = performance_metric.measure(clients_data[client_id][1], attack)
-                            results.append({"client_id": client_id, "performance_metric": performance_metric.name, "result": result})
+                            attack_results.append({"client_id": client_id, "performance_metric": performance_metric.name, "result": result})
 
+            print("[blue]Aggregating client models...[/blue]")
+            
             self.aggregate()
 
-        return results
+        print("[green]PerFedAvg completed.[/green]")
+
+        for client in self.clients:
+            client.set_model(self.model.clone())
+
+        for handler in algorithm_result_handlers:
+            handler.append_algorithm_results(self, self.clients, source_attack=attack)
+
+        if model_performance_metrics:
+            print("[blue]Evaluating final trained global model...[/blue]")
+            for performance_metric in model_performance_metrics:
+                result = performance_metric.measure(self.clients, self.model_metric_option)
+                performance_results.append({"performance_metric": performance_metric.name, "result": result})
+
+        return {"attack_results": attack_results, "performance_results": performance_results}

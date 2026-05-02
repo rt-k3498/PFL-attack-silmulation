@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Dict, Tuple
+from typing import Any, List, Dict, Tuple
 from attacks.attack import Attack
 from metrics.PerformanceMetric import PerformanceMetric
 
@@ -7,11 +7,25 @@ class MSE_metric(PerformanceMetric):
     def __init__(self):
         super().__init__("MSE_metric")
 
-    def measure(self, used_in_training_data: List[Tuple[np.ndarray, np.ndarray]], attack: Attack) -> List[Dict[str, float]]:
+    @staticmethod
+    def _as_batch(value: Any) -> np.ndarray:
+        arr = np.asarray(value, dtype=np.float32)
+        if arr.ndim == 3:
+            return arr[np.newaxis, ...]
+        return arr
+
+    def measure(
+        self,
+        used_in_training_data: Tuple[np.ndarray, np.ndarray],
+        attack: Attack,
+        context: Dict[str, Any] | None = None,
+    ) -> List[Dict[str, float]]:
+        reconstructed_input = self._as_batch(attack.reconstructed_input)
+        x, _y = used_in_training_data
+        actual_input = self._as_batch(x)
+
         results = []
-        reconstructed_input = np.asarray(attack.reconstructed_input, dtype=np.float32)
-        for (x, _y) in used_in_training_data:
-            actual_input = np.asarray(x, dtype=np.float32)
-            input_mse = float(np.mean((reconstructed_input - actual_input) ** 2))
+        for sample_index in range(min(len(actual_input), len(reconstructed_input))):
+            input_mse = float(np.mean((reconstructed_input[sample_index] - actual_input[sample_index]) ** 2))
             results.append({"input_mse": input_mse})
         return results

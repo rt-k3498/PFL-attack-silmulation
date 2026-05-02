@@ -5,9 +5,10 @@ import tensorflow as tf
 class CIFAR10Data:
     _CIFAR_10_CLASSES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
-    def __init__(self, seed: int):
+    def __init__(self, seed: int, train: bool = True):
         self.seed = seed
-        ds = tfds.load("cifar10", split="train", as_supervised=True, data_dir="./data/public") # as_supervised=True means that the dataset is returned as a tuple of (image, label)
+        split = "train" if train else "test"
+        ds = tfds.load("cifar10", split=split, as_supervised=True, data_dir="./data/public") # as_supervised=True means that the dataset is returned as a tuple of (image, label)
         ds = CIFAR10Data._get_cifar_10_ds(ds)
         self.ds = ds
 
@@ -49,4 +50,64 @@ class CIFAR10Data:
         for batch in batches:
             x.append(self.normalize_x(batch[0]))
             y.append(self.one_hot_encode_y(batch[1]))
+        return x, y
+    
+    def get_uniform_x_y(self, batch_size: int, number_of_batches: int) -> Tuple[List[Any], List[Any]]:
+        num_classes = len(CIFAR10Data._CIFAR_10_CLASSES)
+        if batch_size % num_classes != 0:
+            raise ValueError("batch_size must be a multiple of the number of classes")
+
+        samples_per_class = batch_size // num_classes
+        class_batches = []
+        for class_label in CIFAR10Data._CIFAR_10_CLASSES:
+            class_label_tensor = tf.constant(class_label, dtype=tf.int64)
+            class_ds = self.ds.filter(
+                lambda _x, y, label=class_label_tensor: tf.equal(tf.cast(y, tf.int64), label)
+            )
+            class_ds = class_ds.shuffle(
+                buffer_size=10000,
+                seed=self.seed + class_label,
+                reshuffle_each_iteration=False,
+            )
+            class_batches.append(iter(class_ds.batch(samples_per_class)))
+
+        x = []
+        y = []
+        for batch_index in range(number_of_batches):
+            batch_x = []
+            batch_y = []
+            for class_batch in class_batches:
+                class_x, class_y = next(class_batch)
+                batch_x.append(class_x)
+                batch_y.append(class_y)
+
+            batch_x = tf.concat(batch_x, axis=0)
+            batch_y = tf.concat(batch_y, axis=0)
+            indices = tf.random.shuffle(tf.range(tf.shape(batch_y)[0]), seed=self.seed + batch_index)
+
+            x.append(self.normalize_x(tf.gather(batch_x, indices)))
+            y.append(self.one_hot_encode_y(tf.gather(batch_y, indices)))
+        return x, y
+    
+    def get_structured_x_y(self, batch_size: int, number_of_batches: int) -> Tuple[List[Any], List[Any]]:
+        x = []
+        y = []
+        num_classes = len(CIFAR10Data._CIFAR_10_CLASSES)
+
+        for batch_index in range(number_of_batches):
+            class_label = CIFAR10Data._CIFAR_10_CLASSES[batch_index % num_classes]
+            class_label_tensor = tf.constant(class_label, dtype=tf.int64)
+            class_ds = self.ds.filter(
+                lambda _x, y, label=class_label_tensor: tf.equal(tf.cast(y, tf.int64), label)
+            )
+            class_ds = class_ds.shuffle(
+                buffer_size=10000,
+                seed=self.seed + batch_index,
+                reshuffle_each_iteration=False,
+            )
+
+            batch_x, batch_y = next(iter(class_ds.batch(batch_size).take(1)))
+            x.append(self.normalize_x(batch_x))
+            y.append(self.one_hot_encode_y(batch_y))
+
         return x, y

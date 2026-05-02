@@ -44,13 +44,13 @@ For non-smoke runs, refinement is a 3-point search:
 Run only DLG:
 
 ```bash
-python hyperparameter_simulation.py --attack DLG
+python hyperparameter_simulation.py --attack DLG --output-dir results/hyperparameters/dlg
 ```
 
 Run only InvertingGradients:
 
 ```bash
-python hyperparameter_simulation.py --attack InvertingGradients
+python hyperparameter_simulation.py --attack InvertingGradients --output-dir results/hyperparameters/inverting_gradients
 ```
 
 Run both attacks:

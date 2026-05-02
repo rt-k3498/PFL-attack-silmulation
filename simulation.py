@@ -6,31 +6,29 @@ from algorithms.fedAvg import FedAvg
 from algorithms.fedPer import FedPer
 from attacks.DLG import DLG
 from attacks.InvertingGradients import InvertingGradients
+from metrics.ComparisonMetric import ComparisonMetric
 from metrics.MSE_metric import MSE_metric
 from metrics.PSNR_metric import PSNR_metric
 from metrics.SSIM_metric import SSIM_metric
 from metrics.VisualMetric import VisualMetric
+from metrics.ModelCrossEntropy import ModelCrossEntropy
+from metrics.PredictionComparison import PredictionComparison
+from results.ResultHandler import AlgorithmResultHandler, AttackResultHandler
 
-import csv
 from rich import print
 import numpy as np
 import tensorflow as tf
 import random
-from tabulate import tabulate
-from collections import defaultdict
-from typing import Dict, Tuple
 
-seed = 50
-I = 1 # number of images
-J = 1 # number of runs
+seed = 42
 
 def reseed(seed: int) -> None:
     np.random.seed(seed)
     tf.random.set_seed(seed)
     random.seed(seed)
 
-def trial_seed(i: int, j: int) -> int:
-    return seed + 1000 * j + i
+def trial_seed(run: int) -> int:
+    return seed + 1000 * run
 
 class _SeededAttack:
     """
@@ -64,264 +62,158 @@ class _SeededAttack:
 
 reseed(seed)
 
-batch_size = 1 # number of images per client
-ds = CIFAR10Data(seed=seed)
-x_data_list, y_data_list = ds.get_x_y(batch_size, I)
+config = {
+    "batch_size": 10, # number of images per client (should match the number of communication rounds for simplicity, since each client will be sampled once per round)
+    "num_runs": 1, # number of runs (complete executions of all algorithms and attacks, for averaging simulations)
+    "ds": CIFAR10Data(seed=seed),
+    "x_data_list": None,
+    "y_data_list": None,
+    "local_training_rounds": 1, # number of local training rounds per client
+    "communication_rounds": 10, # number of communication rounds (calls to algo.run())
+    "num_clients": 10, # number of clients (and thus number of reconstructed images per algo/attack/run)
+    "loss_function": tf.keras.losses.CategoricalCrossentropy(),
+    "num_final_model_evaluation_iterations": 1, # number of batches to evaluate the final model on (for ModelCrossEntropy metric)
+}
 
-local_training_rounds = 1 # number of local training rounds per client
+config["x_data_list"], config["y_data_list"] = config["ds"].get_structured_x_y(config["batch_size"], config["num_clients"]*config["num_runs"])
 
-mse_metric = MSE_metric()
-psnr_metric = PSNR_metric()
-ssim_metric = SSIM_metric()
-visual_metric = VisualMetric()
+model_performance_metric_settings = {
+    "batch_size": config["batch_size"],
+    "num_iterations": config["num_final_model_evaluation_iterations"],
+    "number_of_clients": config["num_clients"],
+    "loss_function": config["loss_function"],
+    "adaptation_alpha": 0.1,
+}
 
-
-def _safe_tag(s: str) -> str:
-    for ch in (" ", "/", "(", ")", ",", "="):
-        s = s.replace(ch, "_")
-    return s
-
-loss_function = tf.keras.losses.CategoricalCrossentropy()
+attack_result_handler = AttackResultHandler(metrics=[
+    ComparisonMetric(),
+    MSE_metric(),
+    PSNR_metric(),
+    SSIM_metric(),
+    VisualMetric(),
+])
+algorithm_result_handler = AlgorithmResultHandler(metrics=[
+    PredictionComparison(seed=seed, settings=model_performance_metric_settings),
+    ModelCrossEntropy(seed=seed, settings=model_performance_metric_settings),
+])
+result_handlers = [attack_result_handler, algorithm_result_handler]
 
 algos = {
     "FedAvg": lambda model, clients: FedAvg(model, clients, seed=seed, settings={
-        "communication_rounds": 1,
-        "client_training_rounds": local_training_rounds,
-        "client_training_batch_size": batch_size,
-        "loss_function": loss_function,
+        "communication_rounds": config["communication_rounds"],
+        "client_training_rounds": config["local_training_rounds"],
+        "client_training_batch_size": config["batch_size"],
+        "loss_function": config["loss_function"],
     }),
     "FedPer(K_p=1)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
-        "communication_rounds": 1,
-        "client_training_rounds": local_training_rounds,
+        "communication_rounds": config["communication_rounds"],
+        "client_training_rounds": config["local_training_rounds"],
         "alpha": 0.1,
-        "K_p": 2, 
-        "client_training_batch_size": batch_size,
-        "loss_function": loss_function,
+        "K_p": 1, 
+        "client_training_batch_size": config["batch_size"],
+        "loss_function": config["loss_function"],
     }),
     "FedPer(K_p=2)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
-        "communication_rounds": 1,
-        "client_training_rounds": local_training_rounds,
+        "communication_rounds": config["communication_rounds"],
+        "client_training_rounds": config["local_training_rounds"],
         "alpha": 0.1,
         "K_p": 2,
-        "client_training_batch_size": batch_size,
-        "loss_function": loss_function,
+        "client_training_batch_size": config["batch_size"],
+        "loss_function": config["loss_function"],
     }),
     "FedPer(K_p=3)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
-        "communication_rounds": 1,
-        "client_training_rounds": local_training_rounds,
+        "communication_rounds": config["communication_rounds"],
+        "client_training_rounds": config["local_training_rounds"],
         "alpha": 0.1,
         "K_p": 3,
-        "client_training_batch_size": batch_size,
-        "loss_function": loss_function,
+        "client_training_batch_size": config["batch_size"],
+        "loss_function": config["loss_function"],
     }),
     "FedPer(K_p=4)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
-        "communication_rounds": 1,
-        "client_training_rounds": local_training_rounds,
+        "communication_rounds": config["communication_rounds"],
+        "client_training_rounds": config["local_training_rounds"],
         "alpha": 0.1,
         "K_p": 4,
-        "client_training_batch_size": batch_size,
-        "loss_function": loss_function,
+        "client_training_batch_size": config["batch_size"],
+        "loss_function": config["loss_function"],
+    }),
+    "FedPer(K_p=5)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
+        "communication_rounds": config["communication_rounds"],
+        "client_training_rounds": config["local_training_rounds"],
+        "alpha": 0.1,
+        "K_p": 5,
+        "client_training_batch_size": config["batch_size"],
+        "loss_function": config["loss_function"],
     }),
     "Per-FedAvg(FO)": lambda model, clients: PerFedAvg(model, clients, seed=seed, settings={
-        "communication_rounds": 1,
-        "client_training_rounds": local_training_rounds,
+        "communication_rounds": config["communication_rounds"],
+        "client_training_rounds": config["local_training_rounds"],
         "client_adaptation_rounds": 1,
-        "client_training_batch_size": batch_size,
+        "client_training_batch_size": config["batch_size"],
         "reuse_data_batches": True,
         "local_training_approximation": "FO",
-        "loss_function": loss_function,
+        "loss_function": config["loss_function"],
     }),
     "Per-FedAvg(HF)": lambda model, clients: PerFedAvg(model, clients, seed=seed, settings={
-        "communication_rounds": 1,
-        "client_training_rounds": local_training_rounds,
+        "communication_rounds": config["communication_rounds"],
+        "client_training_rounds": config["local_training_rounds"],
         "client_adaptation_rounds": 1,
-        "client_training_batch_size": batch_size,
+        "client_training_batch_size": config["batch_size"],
         "reuse_data_batches": True,
         "local_training_approximation": "HF",
-        "loss_function": loss_function,
+        "loss_function": config["loss_function"],
     }),
     "Per-FedAvg(HVP)": lambda model, clients: PerFedAvg(model, clients, seed=seed, settings={
-        "communication_rounds": 1,
-        "client_training_rounds": local_training_rounds,
+        "communication_rounds": config["communication_rounds"],
+        "client_training_rounds": config["local_training_rounds"],
         "client_adaptation_rounds": 1,
-        "client_training_batch_size": batch_size,
+        "client_training_batch_size": config["batch_size"],
         "reuse_data_batches": True,
         "local_training_approximation": "HVP",
-        "loss_function": loss_function,
+        "loss_function": config["loss_function"],
     }),
 }
 
 attacks = {
     "DLG": lambda: DLG(seed=seed, settings={
         "max_iterations": 300,
-        "f_relative_tolerance": 1e-15,
+        "f_relative_tolerance": 1.25e-12,
         "max_line_search_iterations": 300,
-        "num_correction_pairs": 100,
+        "num_correction_pairs": 175,
         "tolerance": 1e-15,
     }),
     "InvertingGradients": lambda: InvertingGradients(seed=seed, settings={
         "max_iterations": 300,
         "init_step_size": 0.1,
-        "final_step_size": 0.01,
-        "alpha": 1e-13,
+        "final_step_size": 0.09,
+        "alpha": 6.3e-13,
     }),
 }
 
 
-results = {}
-total = J * I * len(algos) * len(attacks)
+total = config["num_runs"] * len(algos) * len(attacks)
 done = 0
-for j in range(J):
-    for i in range(I):
-        for algo_name, make_algo in algos.items():
-            for attack_name, make_attack in attacks.items():
-                done += 1
-                print(f"[cyan][{done}/{total}] run={j+1} image={i} algo={algo_name} attack={attack_name}[/cyan]")
 
-                ts = trial_seed(i, j)
-                reseed(ts)
+for run in range(config["num_runs"]): 
+    for handler in result_handlers:
+        handler.set_run_index(run)
 
-                model = LeNet(seed=seed)
-                client = Client(id=1, data=ds, seed=seed, batch_size=1)
-                client.data_x = x_data_list[i]
-                client.data_y = y_data_list[i]
+    for _algo_name, make_algo in algos.items():
+        for _attack_name, make_attack in attacks.items():
+            done += 1
 
-                attack = _SeededAttack(make_attack(), ts)
-                algo = make_algo(model, [client])
-                visual_metric.tag = _safe_tag(f"{algo_name}__{attack_name}__i{i}__j{j}")
-                results[(algo_name, attack_name, i, j)] = algo.run(
-                    attack, performance_metrics=[mse_metric, psnr_metric, ssim_metric, visual_metric]
-                )
+            ts = trial_seed(run)
+            reseed(ts)
 
+            model = LeNet(seed=seed)
+            clients = [Client(id=i, data=config["ds"], seed=seed, batch_size=config["batch_size"]) for i in range(config["num_clients"])]
+            for client in clients: 
+                client.set_data(config["x_data_list"][(client.id + run * config["num_clients"])], config["y_data_list"][(client.id + run * config["num_clients"])])
 
-rows = []
-for (algo_name, attack_name, i, j), metric_entries in results.items():
-    merged: Dict[Tuple[int, int], Dict[str, float]] = {}
-    for entry in metric_entries:
-        client_id = entry["client_id"]
-        for sample_idx, sample in enumerate(entry["result"]):
-            key = (client_id, sample_idx)
-            if key not in merged:
-                merged[key] = {"Client": client_id}
-            merged[key].update(sample)
-
-    for (client_id, _sample_idx), sample in merged.items():
-        rows.append({
-            "Algorithm":  algo_name,
-            "Attack":     attack_name,
-            "Image":      i,
-            "Run":        j,
-            "Client":     client_id,
-            "Input MSE":  sample.get("input_mse"),
-            "Input PSNR": sample.get("input_psnr"),
-            "Input SSIM": sample.get("input_ssim"),
-        })
-
-algo_order = {name: idx for idx, name in enumerate(algos.keys())}
-attack_order = {name: idx for idx, name in enumerate(attacks.keys())}
-
-rows.sort(key=lambda r: (
-    algo_order[r["Algorithm"]],
-    attack_order[r["Attack"]],
-    r["Image"],
-    r["Run"],
-    r["Client"],
-))
-
-output_lines = []
-
-def emit(line: str = "") -> None:
-    print(line)
-    output_lines.append(line)
-
-emit()
-emit("=" * 80)
-emit("Raw results (one row per reconstructed sample)")
-emit("=" * 80)
-emit(tabulate(rows, headers="keys", tablefmt="fancy_grid", floatfmt=".4f"))
-
-
-per_image_agg = defaultdict(lambda: {"mse_sum": 0.0, "psnr_sum": 0.0, "ssim_sum": 0.0, "count": 0})
-for r in rows:
-    key = (r["Algorithm"], r["Attack"], r["Image"])
-    per_image_agg[key]["mse_sum"]  += r["Input MSE"]
-    per_image_agg[key]["psnr_sum"] += r["Input PSNR"]
-    per_image_agg[key]["ssim_sum"] += r["Input SSIM"]
-    per_image_agg[key]["count"]    += 1
-
-per_image_rows = [
-    {
-        "Algorithm":      algo_name,
-        "Attack":         attack_name,
-        "Image":          image_idx,
-        "Avg Input MSE":  v["mse_sum"]  / v["count"],
-        "Avg Input PSNR": v["psnr_sum"] / v["count"],
-        "Avg Input SSIM": v["ssim_sum"] / v["count"],
-        "N":              v["count"],
-    }
-    for (algo_name, attack_name, image_idx), v in per_image_agg.items()
-]
-
-per_image_rows.sort(key=lambda r: (
-    algo_order[r["Algorithm"]],
-    attack_order[r["Attack"]],
-    r["Image"],
-))
-
-emit()
-emit("=" * 80)
-emit("Averages per (Algorithm, Attack, Image) - mean over runs (j)")
-emit("=" * 80)
-emit(tabulate(per_image_rows, headers="keys", tablefmt="fancy_grid", floatfmt=".4f"))
-
-
-overall_agg = defaultdict(lambda: {"mse_sum": 0.0, "psnr_sum": 0.0, "ssim_sum": 0.0, "count": 0})
-for r in rows:
-    key = (r["Algorithm"], r["Attack"])
-    overall_agg[key]["mse_sum"]  += r["Input MSE"]
-    overall_agg[key]["psnr_sum"] += r["Input PSNR"]
-    overall_agg[key]["ssim_sum"] += r["Input SSIM"]
-    overall_agg[key]["count"]    += 1
-
-overall_rows = [
-    {
-        "Algorithm":      algo_name,
-        "Attack":         attack_name,
-        "Avg Input MSE":  v["mse_sum"]  / v["count"],
-        "Avg Input PSNR": v["psnr_sum"] / v["count"],
-        "Avg Input SSIM": v["ssim_sum"] / v["count"],
-        "N":              v["count"],
-    }
-    for (algo_name, attack_name), v in overall_agg.items()
-]
-
-overall_rows.sort(key=lambda r: (
-    algo_order[r["Algorithm"]],
-    attack_order[r["Attack"]],
-))
-
-emit()
-emit("=" * 80)
-emit("Concise averages per (Algorithm, Attack) - mean over runs (j) and images (i)")
-emit("=" * 80)
-emit(tabulate(overall_rows, headers="keys", tablefmt="fancy_grid", floatfmt=".4f"))
-
-raw_fieldnames = [
-    "Algorithm",
-    "Attack",
-    "Image",
-    "Run",
-    "Client",
-    "Input MSE",
-    "Input PSNR",
-    "Input SSIM",
-]
-with open("./results/raw_results.csv", "w", newline="") as f:
-    writer = csv.DictWriter(f, fieldnames=raw_fieldnames)
-    writer.writeheader()
-    writer.writerows(rows)
-
-with open("./results/results.txt", "w") as f:
-    f.write("\n".join(output_lines) + "\n")
-
-
+            attack = _SeededAttack(make_attack(), ts)
+            algo = make_algo(model, clients)
+            print(f"[cyan][{done}/{total}] run={run+1} algo={algo.name} attack={attack.name}[/cyan]")
+            algo.run(
+                attack,
+                result_handlers=result_handlers,
+            )
