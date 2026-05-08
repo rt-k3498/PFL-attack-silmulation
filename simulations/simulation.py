@@ -63,19 +63,26 @@ class _SeededAttack:
 reseed(seed)
 
 config = {
-    "batch_size": 5, # number of images per client (should match the number of communication rounds for simplicity, since each client will be sampled once per round)
-    "num_runs": 1, # number of runs (complete executions of all algorithms and attacks, for averaging simulations)
+    "batch_size": 3, # number of images per client (should match the number of communication rounds for simplicity, since each client will be sampled once per round)
+    "client_training_batch_size": 1, # batch size for client training (should match the number of images per client for simplicity, so that each client trains on all their data each round)
+    "num_runs": 3, # number of runs (complete executions of all algorithms and attacks, for averaging simulations)
     "ds": CIFAR10Data(seed=seed),
     "x_data_list": None,
     "y_data_list": None,
     "local_training_rounds": 1, # number of local training rounds per client
-    "communication_rounds": 5, # number of communication rounds (calls to algo.run())
-    "num_clients": 10, # number of clients (and thus number of reconstructed images per algo/attack/run)
+    "communication_rounds": None, # number of communication rounds (calls to algo.run())
+    "num_clients": 5, # number of clients (and thus number of reconstructed images per algo/attack/run)
     "loss_function": tf.keras.losses.CategoricalCrossentropy(),
     "num_final_model_evaluation_iterations": 1, # number of batches to evaluate the final model on (for ModelCrossEntropy metric)
+    "labels_per_client": 2, # number of unique labels per client (for non-iid data partitioning)
 }
 
-config["x_data_list"], config["y_data_list"] = config["ds"].get_structured_x_y(config["batch_size"], config["num_clients"]*config["num_runs"])
+classes_per_run = len(CIFAR10Data._CIFAR_10_CLASSES)
+if config["num_clients"] * config["labels_per_client"] != classes_per_run:
+    raise ValueError("num_clients * labels_per_client must cover each CIFAR-10 class exactly once")
+
+config["communication_rounds"] = config["batch_size"] * config["labels_per_client"]
+config["x_data_list"], config["y_data_list"] = config["ds"].get_structured_x_y(config["batch_size"], classes_per_run*config["num_runs"])
 
 model_performance_metric_settings = {
     "batch_size": config["batch_size"],
@@ -90,7 +97,6 @@ attack_result_handler = AttackResultHandler(metrics=[
     MSE_metric(),
     PSNR_metric(),
     SSIM_metric(),
-    VisualMetric(),
 ])
 algorithm_result_handler = AlgorithmResultHandler(metrics=[
     PredictionComparison(seed=seed, settings=model_performance_metric_settings),
@@ -102,7 +108,7 @@ algos = {
     "FedAvg": lambda model, clients: FedAvg(model, clients, seed=seed, settings={
         "communication_rounds": config["communication_rounds"],
         "client_training_rounds": config["local_training_rounds"],
-        "client_training_batch_size": config["batch_size"],
+        "client_training_batch_size": config["client_training_batch_size"],
         "loss_function": config["loss_function"],
     }),
     "FedPer(K_p=1)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
@@ -110,7 +116,7 @@ algos = {
         "client_training_rounds": config["local_training_rounds"],
         "alpha": 0.1,
         "K_p": 1, 
-        "client_training_batch_size": config["batch_size"],
+        "client_training_batch_size": config["client_training_batch_size"],
         "loss_function": config["loss_function"],
     }),
     "FedPer(K_p=2)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
@@ -118,7 +124,7 @@ algos = {
         "client_training_rounds": config["local_training_rounds"],
         "alpha": 0.1,
         "K_p": 2,
-        "client_training_batch_size": config["batch_size"],
+        "client_training_batch_size": config["client_training_batch_size"],
         "loss_function": config["loss_function"],
     }),
     "FedPer(K_p=3)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
@@ -126,7 +132,7 @@ algos = {
         "client_training_rounds": config["local_training_rounds"],
         "alpha": 0.1,
         "K_p": 3,
-        "client_training_batch_size": config["batch_size"],
+        "client_training_batch_size": config["client_training_batch_size"],
         "loss_function": config["loss_function"],
     }),
     "FedPer(K_p=4)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
@@ -134,7 +140,7 @@ algos = {
         "client_training_rounds": config["local_training_rounds"],
         "alpha": 0.1,
         "K_p": 4,
-        "client_training_batch_size": config["batch_size"],
+        "client_training_batch_size": config["client_training_batch_size"],
         "loss_function": config["loss_function"],
     }),
     "FedPer(K_p=5)": lambda model, clients: FedPer(model, clients, seed=seed, settings={
@@ -142,14 +148,14 @@ algos = {
         "client_training_rounds": config["local_training_rounds"],
         "alpha": 0.1,
         "K_p": 5,
-        "client_training_batch_size": config["batch_size"],
+        "client_training_batch_size": config["client_training_batch_size"],
         "loss_function": config["loss_function"],
     }),
     "Per-FedAvg(FO)": lambda model, clients: PerFedAvg(model, clients, seed=seed, settings={
         "communication_rounds": config["communication_rounds"],
         "client_training_rounds": config["local_training_rounds"],
         "client_adaptation_rounds": 1,
-        "client_training_batch_size": config["batch_size"],
+        "client_training_batch_size": config["client_training_batch_size"],
         "reuse_data_batches": True,
         "local_training_approximation": "FO",
         "loss_function": config["loss_function"],
@@ -158,7 +164,7 @@ algos = {
         "communication_rounds": config["communication_rounds"],
         "client_training_rounds": config["local_training_rounds"],
         "client_adaptation_rounds": 1,
-        "client_training_batch_size": config["batch_size"],
+        "client_training_batch_size": config["client_training_batch_size"],
         "reuse_data_batches": True,
         "local_training_approximation": "HF",
         "loss_function": config["loss_function"],
@@ -167,7 +173,7 @@ algos = {
         "communication_rounds": config["communication_rounds"],
         "client_training_rounds": config["local_training_rounds"],
         "client_adaptation_rounds": 1,
-        "client_training_batch_size": config["batch_size"],
+        "client_training_batch_size": config["client_training_batch_size"],
         "reuse_data_batches": True,
         "local_training_approximation": "HVP",
         "loss_function": config["loss_function"],
@@ -194,9 +200,33 @@ attacks = {
 total = config["num_runs"] * len(algos) * len(attacks)
 done = 0
 
+clients = [Client(id=i, data=config["ds"], seed=seed, batch_size=config["batch_size"]*config["labels_per_client"]) for i in range(config["num_clients"])]
+
+client_labels_assignment = {client.id: [] for client in clients}
+
+for client in clients:
+    for i in range(config["labels_per_client"]):
+        client_labels_assignment[client.id].append((client.id + (i * config["num_clients"])))
+    client.set_label_classes(client_labels_assignment[client.id])
+
+del client_labels_assignment
+
 for run in range(config["num_runs"]): 
     for handler in result_handlers:
         handler.set_run_index(run)
+
+    client_x_data_assignment = {client.id: [] for client in clients}
+    client_y_data_assignment = {client.id: [] for client in clients}
+
+    for client in clients:
+        for i in client.get_label_classes():
+            client_x_data_assignment[client.id].append(config["x_data_list"][i + (classes_per_run * run)])
+            client_y_data_assignment[client.id].append(config["y_data_list"][i + (classes_per_run * run)])
+
+        client.set_data(client_x_data_assignment[client.id], client_y_data_assignment[client.id])
+    
+    del client_x_data_assignment
+    del client_y_data_assignment
 
     for _algo_name, make_algo in algos.items():
         for _attack_name, make_attack in attacks.items():
@@ -206,9 +236,9 @@ for run in range(config["num_runs"]):
             reseed(ts)
 
             model = LeNet(seed=seed)
-            clients = [Client(id=i, data=config["ds"], seed=seed, batch_size=config["batch_size"]) for i in range(config["num_clients"])]
+            
             for client in clients: 
-                client.set_data(config["x_data_list"][(client.id + run * config["num_clients"])], config["y_data_list"][(client.id + run * config["num_clients"])])
+                client.reinitialize_client()
 
             attack = _SeededAttack(make_attack(), ts)
             algo = make_algo(model, clients)

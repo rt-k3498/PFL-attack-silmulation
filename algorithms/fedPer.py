@@ -118,6 +118,7 @@ class FedPer:
                             attack,
                             idx + 1,
                             client_id,
+                            self.clients[client_id].get_label_classes(),
                             clients_data[client_id][1],
                         )
                     if attack_performance_metrics:

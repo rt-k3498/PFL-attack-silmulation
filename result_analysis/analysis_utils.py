@@ -52,8 +52,29 @@ def _mean(values: Iterable[float]) -> float | None:
 
 
 def _load_csv(path: str | Path) -> List[Dict[str, str]]:
-    with Path(path).open(newline="") as file:
+    with _resolve_path(path).open(newline="") as file:
         return list(csv.DictReader(file))
+
+
+def _resolve_path(path: str | Path) -> Path:
+    path = Path(path)
+    if path.is_absolute():
+        return path
+    if path.exists():
+        return path
+
+    project_relative = PROJECT_ROOT / path
+    if project_relative.exists():
+        return project_relative
+
+    return path
+
+
+def _resolve_output_path(path: str | Path) -> Path:
+    path = Path(path)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
 
 
 def combine_csvs(
@@ -79,7 +100,7 @@ def combine_csvs(
                     fieldnames.append(key)
         all_rows.extend(rows)
 
-    output_path = Path(output_path)
+    output_path = _resolve_output_path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -105,6 +126,8 @@ def attack_summary(data: Any = None):
         "input mse": [],
         "input psnr": [],
         "input ssim": [],
+        "label_matches": 0,
+        "label_predictions": 0,
     })
 
     for row in records:
@@ -115,11 +138,18 @@ def attack_summary(data: Any = None):
             if value is not None:
                 grouped[key][metric].append(value)
 
+        actual_label = row.get("actual label")
+        reconstructed_label = row.get("reconstructed label")
+        if actual_label not in (None, "") and reconstructed_label not in (None, ""):
+            grouped[key]["label_predictions"] += 1
+            grouped[key]["label_matches"] += int(str(actual_label) == str(reconstructed_label))
+
     summary = []
     for (algorithm, attack), values in grouped.items():
         mse = values["input mse"]
         psnr = values["input psnr"]
         ssim = values["input ssim"]
+        label_predictions = values["label_predictions"]
         summary.append({
             "algorithm": algorithm,
             "attack": attack,
@@ -133,6 +163,7 @@ def attack_summary(data: Any = None):
             "mean_ssim": _mean(ssim),
             "min_ssim": min(ssim) if ssim else None,
             "max_ssim": max(ssim) if ssim else None,
+            "label_recover": values["label_matches"] / label_predictions if label_predictions else None,
         })
 
     summary.sort(key=lambda row: (row["algorithm"] or "", row["attack"] or ""))
@@ -211,6 +242,7 @@ def plot_attack_metric(
         "input mse": "mean_mse",
         "input psnr": "mean_psnr",
         "input ssim": "mean_ssim",
+        "label_recover": "label_recover",
     }
     value_column = metric_map.get(metric, metric)
     records = _records(attack_summary(data))
@@ -235,6 +267,8 @@ def plot_attack_metric(
     axis.set_ylabel(metric)
     axis.set_xticks([pos + width * (len(attacks) - 1) / 2 for pos in positions])
     axis.set_xticklabels(algorithms, rotation=45, ha="right")
+    if metric == "label_recover":
+        axis.set_ylim(0, 1)
     axis.legend(title="Attack")
     fig.tight_layout()
     return axis

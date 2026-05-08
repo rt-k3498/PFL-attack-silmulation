@@ -70,15 +70,15 @@ class ModelCrossEntropy(ModelPerformanceMetric):
             case _:
                 raise ValueError(f"Unsupported algorithm: {algorithm}")
 
-    def _test_batch_index(self, client: Client, iteration: int) -> int:
-        return int(client.id) + iteration * self.num_classes
+    def _test_batch_indicies(self, client: Client, iteration: int) -> List[int]:
+        return [iteration * self.num_classes + label_class for label_class in client.get_label_classes()]
 
     def _evaluate_model_on_client_batches(self, model: Model, client: Client) -> List[Dict[str, float]]:
         results = []
         for iteration in range(self.num_iterations):
-            batch_index = self._test_batch_index(client, iteration)
-            x = self.test_x[batch_index]
-            y = self.test_y[batch_index]
+            batch_indicies = self._test_batch_indicies(client, iteration)
+            x = tf.concat([self.test_x[i] for i in batch_indicies], axis=0)
+            y = tf.concat([self.test_y[i] for i in batch_indicies], axis=0)
             y_pred = model.model(x, training=False)
             batch_loss = tf.keras.losses.categorical_crossentropy(y, y_pred)
             for value in batch_loss.numpy().tolist():

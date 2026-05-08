@@ -97,6 +97,7 @@ class AttackResultHandler(ResultHandler):
         "run",
         "communication_round",
         "client_id",
+        "client_label_classes",
         "sample_index",
         "algorithm",
         "attack",
@@ -129,12 +130,14 @@ class AttackResultHandler(ResultHandler):
         attack: Any,
         communication_round: int,
         client_id: int,
+        client_label_classes: List[int],
         used_in_training_data: Any,
     ) -> None:
         context = {
             "run": self.current_run_index,
             "communication_round": communication_round,
             "client_id": client_id,
+            "client_label_classes": client_label_classes,
             "algorithm": getattr(algorithm, "name", algorithm.__class__.__name__),
             "attack": getattr(attack, "name", attack.__class__.__name__),
         }
@@ -148,6 +151,7 @@ class AttackResultHandler(ResultHandler):
                 "run": self.current_run_index,
                 "communication_round": communication_round,
                 "client_id": client_id,
+                "client_label_classes": client_label_classes,
                 "sample_index": sample_index,
                 "algorithm": context["algorithm"],
                 "attack": context["attack"],
@@ -162,6 +166,7 @@ class AlgorithmResultHandler(ResultHandler):
         "run",
         "source_attack",
         "client_id",
+        "client_label_classes",
         "evaluation_iteration",
         "sample_index",
         "algorithm",
@@ -206,10 +211,13 @@ class AlgorithmResultHandler(ResultHandler):
 
         rows = []
         for client in clients:
+            client_label_classes = client.get_label_classes()
+            samples_per_iteration = int(batch_size) * len(client_label_classes)
             for evaluation_iteration in range(int(num_iterations)):
-                for sample_index in range(int(batch_size)):
+                for sample_index in range(samples_per_iteration):
                     rows.append({
                         "client_id": client.id,
+                        "client_label_classes": client_label_classes,
                         "evaluation_iteration": evaluation_iteration,
                         "sample_index": sample_index,
                     })
