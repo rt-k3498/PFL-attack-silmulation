@@ -63,7 +63,7 @@ class _SeededAttack:
 reseed(seed)
 
 config = {
-    "batch_size": 5, # number of images per client (should match the number of communication rounds for simplicity, since each client will be sampled once per round)
+    "batch_size": 10, # number of images per client (should match the number of communication rounds for simplicity, since each client will be sampled once per round)
     "client_training_batch_size": 1, # batch size for client training (should match the number of images per client for simplicity, so that each client trains on all their data each round)
     "num_runs": 3, # number of runs (complete executions of all algorithms and attacks, for averaging simulations)
     "ds": CIFAR10Data(seed=seed),
@@ -71,10 +71,10 @@ config = {
     "y_data_list": None,
     "local_training_rounds": 1, # number of local training rounds per client
     "communication_rounds": None, # number of communication rounds (calls to algo.run())
-    "num_clients": 5, # number of clients (and thus number of reconstructed images per algo/attack/run)
+    "num_clients": 10, # number of clients (and thus number of reconstructed images per algo/attack/run)
     "loss_function": tf.keras.losses.CategoricalCrossentropy(),
     "num_final_model_evaluation_iterations": 1, # number of batches to evaluate the final model on (for ModelCrossEntropy metric)
-    "labels_per_client": 2, # number of unique labels per client (for non-iid data partitioning)
+    "labels_per_client": 1, # number of unique labels per client (for non-iid data partitioning)
 }
 
 classes_per_run = len(CIFAR10Data._CIFAR_10_CLASSES)
