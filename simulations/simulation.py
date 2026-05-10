@@ -63,7 +63,7 @@ class _SeededAttack:
 reseed(seed)
 
 config = {
-    "batch_size": 10, # number of images per client (should match the number of communication rounds for simplicity, since each client will be sampled once per round)
+    "batch_size": 5, # number of images per client (should match the number of communication rounds for simplicity, since each client will be sampled once per round)
     "client_training_batch_size": 1, # batch size for client training (should match the number of images per client for simplicity, so that each client trains on all their data each round)
     "num_runs": 3, # number of runs (complete executions of all algorithms and attacks, for averaging simulations)
     "ds": CIFAR10Data(seed=seed),
