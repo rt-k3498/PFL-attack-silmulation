@@ -51,6 +51,34 @@ def _mean(values: Iterable[float]) -> float | None:
     return sum(values) / len(values)
 
 
+def _base_algorithm(algorithm: Any) -> str:
+    algorithm = "" if algorithm is None else str(algorithm)
+    if algorithm.startswith("FedPer("):
+        return "FedPer"
+    if algorithm.startswith("Per-FedAvg("):
+        return "Per-FedAvg"
+    return algorithm
+
+
+def _metric_label(metric: str) -> str:
+    metric_labels = {
+        "input mse": "MSE",
+        "input psnr": "PSNR",
+        "input ssim": "SSIM",
+        "label_recover": "Label reconstruction rate",
+    }
+    return metric_labels.get(metric, metric)
+
+
+def _base_algorithm_sort_key(base_algorithm: str) -> tuple[int, str]:
+    preferred_order = {
+        "FedAvg": 0,
+        "FedPer": 1,
+        "Per-FedAvg": 2,
+    }
+    return (preferred_order.get(base_algorithm, len(preferred_order)), base_algorithm)
+
+
 def _load_csv(path: str | Path) -> List[Dict[str, str]]:
     with _resolve_path(path).open(newline="") as file:
         return list(csv.DictReader(file))
@@ -211,20 +239,39 @@ def algorithm_summary(data: Any = None):
 
 def attack_metric_by_round(data: Any = None, metric: str = "input mse"):
     records = _records(load_attack_results() if data is None else data)
-    grouped: Dict[tuple, List[float]] = defaultdict(list)
+    per_run_grouped: Dict[tuple, List[float]] = defaultdict(list)
     for row in records:
-        value = _to_float(row.get(metric))
-        if value is None:
+        round_idx = row.get("communication_round")
+        if round_idx in (None, ""):
             continue
-        key = (row.get("algorithm"), row.get("attack"), row.get("communication_round"))
-        grouped[key].append(value)
+
+        key = (row.get("algorithm"), row.get("attack"), round_idx, row.get("run"))
+        if metric == "label_recover":
+            actual_label = row.get("actual label")
+            reconstructed_label = row.get("reconstructed label")
+            if actual_label in (None, "") or reconstructed_label in (None, ""):
+                continue
+            per_run_grouped[key].append(float(str(actual_label) == str(reconstructed_label)))
+        else:
+            value = _to_float(row.get(metric))
+            if value is None:
+                continue
+            per_run_grouped[key].append(value)
+
+    grouped: Dict[tuple, List[float]] = defaultdict(list)
+    for (algorithm, attack, round_idx, _run), values in per_run_grouped.items():
+        run_mean = _mean(values)
+        if run_mean is not None:
+            grouped[(algorithm, attack, round_idx)].append(run_mean)
 
     rows = [
         {
             "algorithm": algorithm,
+            "base_algorithm": _base_algorithm(algorithm),
             "attack": attack,
             "communication_round": int(round_idx),
             metric: _mean(values),
+            "run_count": len(values),
         }
         for (algorithm, attack, round_idx), values in grouped.items()
     ]
@@ -276,6 +323,7 @@ def plot_attack_metric(
 
 def plot_attack_metric_by_round(data: Any = None, metric: str = "input mse"):
     plt = _load_pyplot()
+    metric_label = _metric_label(metric)
     records = _records(attack_metric_by_round(data, metric))
     grouped: Dict[tuple, List[Dict[str, Any]]] = defaultdict(list)
     for row in records:
@@ -290,12 +338,54 @@ def plot_attack_metric_by_round(data: Any = None, metric: str = "input mse"):
             marker="o",
             label=f"{algorithm} / {attack}",
         )
-    axis.set_title(f"Mean {metric} by communication round")
+    axis.set_title(f"Mean {metric_label} by communication round")
     axis.set_xlabel("Communication round")
-    axis.set_ylabel(metric)
+    axis.set_ylabel(metric_label)
+    axis.set_xticks(range(1, 11))
+    if metric == "label_recover":
+        axis.set_ylim(0, 1)
     axis.legend()
     fig.tight_layout()
     return axis
+
+
+def plot_attack_metric_by_round_by_algorithm(data: Any = None, metric: str = "input mse"):
+    plt = _load_pyplot()
+    metric_label = _metric_label(metric)
+    records = _records(attack_metric_by_round(data, metric))
+
+    base_algorithms = sorted(
+        {row["base_algorithm"] for row in records},
+        key=_base_algorithm_sort_key,
+    )
+    axes = []
+    for base_algorithm in base_algorithms:
+        grouped: Dict[tuple, List[Dict[str, Any]]] = defaultdict(list)
+        for row in records:
+            if row["base_algorithm"] != base_algorithm:
+                continue
+            grouped[(row["algorithm"], row["attack"])].append(row)
+
+        fig, axis = plt.subplots(figsize=(12, 5))
+        for (algorithm, attack), rows in sorted(grouped.items()):
+            rows.sort(key=lambda row: row["communication_round"])
+            axis.plot(
+                [row["communication_round"] for row in rows],
+                [row[metric] for row in rows],
+                marker="o",
+                label=f"{algorithm} / {attack}",
+            )
+        axis.set_title(f"Mean {metric_label} by communication round - {base_algorithm}")
+        axis.set_xlabel("Communication round")
+        axis.set_ylabel(metric_label)
+        axis.set_xticks(range(1, 11))
+        if metric == "label_recover":
+            axis.set_ylim(0, 1)
+        axis.legend()
+        fig.tight_layout()
+        axes.append(axis)
+
+    return axes
 
 
 def plot_algorithm_crossentropy(data: Any = None):
